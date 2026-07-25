@@ -1,4 +1,5 @@
 import os
+import requests
 import torch
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory
 from flask_wtf import FlaskForm
@@ -16,7 +17,7 @@ from utils.utils import adaptive_instance_normalization, calc_mean_std
 
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'supersecretkey'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'supersecretkey')
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg'}
 Bootstrap(app)
@@ -31,12 +32,39 @@ class UploadForm(FlaskForm):
     alpha = FloatField('Alpha', default=1.0)
     submit = SubmitField('Transfer Style')
 
+def download_weights(url, local_path):
+    """Download a model weights file if it isn't already on disk."""
+    if os.path.exists(local_path):
+        return local_path
+    if not url:
+        raise RuntimeError(
+            f"Missing weights file at '{local_path}' and no download URL was "
+            f"provided. Set the corresponding environment variable "
+            f"(VGG_WEIGHTS_URL / DECODER_WEIGHTS_URL) in Render."
+        )
+    print(f"Downloading {local_path} from {url} ...")
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+    os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
+    with open(local_path, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+    print(f"Saved {local_path}")
+    return local_path
+
+
+VGG_WEIGHTS_PATH = os.environ.get('VGG_WEIGHTS_PATH', 'weights/vgg_normalised.pth')
+DECODER_WEIGHTS_PATH = os.environ.get('DECODER_WEIGHTS_PATH', 'weights/decoder_50.pth')
+
+download_weights(os.environ.get('VGG_WEIGHTS_URL'), VGG_WEIGHTS_PATH)
+download_weights(os.environ.get('DECODER_WEIGHTS_URL'), DECODER_WEIGHTS_PATH)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-encoder = VGGEncoder('vgg_normalised.pth').to(device)
+encoder = VGGEncoder(VGG_WEIGHTS_PATH).to(device)
 decoder = Decoder().to(device)
 decoder.load_state_dict(
-    torch.load('D:/NST_CODE/experiment/big_dataset_v2/decoder_50.pth')
+    torch.load(DECODER_WEIGHTS_PATH, map_location=device)
 )
 encoder.eval()
 decoder.eval()
@@ -146,6 +174,13 @@ def send_example(filename):
 if __name__ == '__main__':
     from werkzeug.serving import run_simple
     run_simple('localhost', 5000, app, use_reloader=True, use_debugger=True)
+
+
+
+
+
+
+
 
 
 
